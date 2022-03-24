@@ -1,0 +1,78 @@
+---
+title: "Prediction Assignment"
+author: "Geoff"
+date: "3/22/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+
+The goal of this project was to predict the manner in which an dumbell lift was done using accelerometer data on the belt, forearm, arm, and dumbell of 6 participants.  The lifts were preformed correctly and incorrectly in 5 different ways.
+
+## Explore the Data
+```{r, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+library(tidyverse)
+library(caret)
+
+dat <- read_csv("pml-training.csv")
+glimpse(dat)
+```
+Since the goal is to predict the manner in which a lift is done from accelerometer data, I removed the user_name, time stamp, and other non measurement columns. There is also a number of columns that have a significant number of NA values.  I decided to remove all of the columns with greater than 90% NAs.  I then tested the remainder of the columns for near zero variance, which there weren't any.  This left 52 predictors to use to predict classe.
+```{r, echo=TRUE}
+dat <- dat[,-c(1:7)]
+colNAprop <- colMeans(is.na(dat))  ##Calc the proportion NAs for each column
+mostlyNAcols <- colNAprop[colNAprop > .9]
+dat <- dat %>% select(-names(mostlyNAcols))
+
+nzv <- nearZeroVar(dat, saveMetrics = TRUE) ##Check for any near zero variance columns
+sum(nzv$zeroVar)
+
+dat <- dat %>% mutate_if(is.character, as.factor)
+glimpse(dat)
+```
+
+## Create Training, Testing, and Valadation sets
+```{r, echo=TRUE}
+set.seed(1111)
+inTrain <- createDataPartition(y=dat$classe, p=3/4, list = FALSE)
+training <- dat[inTrain,]
+testing <- dat[-inTrain,]
+inTesting <- createDataPartition(y=testing$classe, p=3/4, list = FALSE)
+testing <- testing[inTesting,]
+val <- testing[-inTesting,]
+dim(training)
+dim(testing)
+dim(val)
+```
+## Fit & Test Models
+
+I fit GBM and Random Forest models using 10 fold cross validation.
+```{r, echo=TRUE}
+fitControl <- trainControl(method = "cv", number = 10)
+modGbm <- train(classe~., data = training, method = "gbm",trControl=fitControl, verbose = FALSE)
+modRF <- train(classe~., data = training, method = "ranger", trControl=fitControl)
+predGbm <- predict(modGbm,testing)
+predRF <- predict(modRF, testing)
+confusionMatrix(predGbm, testing$classe)
+confusionMatrix(predRF, testing$classe)
+```
+Both models were highly accurate predictors in the testing set, GBM accuracy 96% and RF 99.7%.  Since the RF model is already so accurate it is not likely to benifit from combining predictors, but I did it anyway for the excercise.
+
+```{r, echo=TRUE}
+predDF <- data.frame(pred1=predGbm, pred2=predRF, classe = testing$classe)
+combFit <- train(classe~.,method="rf", data = predDF)
+combPred <- predict(combFit,predDF)
+
+predGbmV <- predict(modGbm, val)
+predRFV <- predict(modRF, val)
+predVDF <- data.frame(pred1=predGbmV, pred2=predRFV)
+combPredV <- predict(combFit, predVDF)
+confusionMatrix(predGbmV,val$classe)
+confusionMatrix(predRFV,val$classe)
+confusionMatrix(combPredV,val$classe)
+```
+From the above we can see that the combined model is no more accurate than the RF model alone. So I used the RF model as my final model and I expect the out of sample error to be less than 1%.
